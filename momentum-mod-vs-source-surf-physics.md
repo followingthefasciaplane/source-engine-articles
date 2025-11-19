@@ -81,7 +81,7 @@ The function `CategorizePosition` runs every frame to determine whether the play
 
 For surfing to work, the engine must maintain the airborne state despite continuous contact with the ramp surface. The steep angle ensures this because the normal check (normal.z < 0.7) fails to qualify the surface as ground. However, the vanilla engine has an issue where high-speed upward movement on slopes can cause premature ground-snapping, instantly applying friction and killing momentum.
 
-**Momentum Mod Enhancement**: The `CategorizePosition` function in Momentum Mod includes predictive logic. It traces ahead one tick to determine where the player will be on the next frame. If this prediction shows the player sliding up the ramp at high speed or falling off an edge, the function maintains the airborne state even if the player is technically close to a surface. This prevents friction application during valid surf movement and enables techniques like edge-bugging, where players can catch the edge of a surface without being snapped to the ground.
+**Momentum Mod Enhancement**: When `sv_edge_fix` is enabled (and the player is not auto-bhopping while holding jump), `CategorizePosition` runs a predictive check before grounding. It applies half-gravity to the current velocity, traces the would-be fall, clips that velocity against the hit plane, then slides for a full tick to see if ground still exists under the slide end. If that follow-up trace would miss, the player stays airborne. The trace depth itself is configurable via `sv_considered_on_ground` (2 units by default).
 
 ---
 
@@ -135,7 +135,7 @@ Understanding the technical implementation requires familiarity with specific te
 
 **Origin** is the player's current position in world space, specified by X, Y, and Z coordinates. Movement calculations modify this position each frame based on velocity and collision results.
 
-**Frametime** (gpGlobals->frametime) is the time interval between server ticks, typically 0.015 seconds for 66-tick servers or 0.01 seconds for 100-tick servers. All physics calculations scale by frametime to ensure consistent behavior regardless of tick rate. Momentum Mod enforces fixed timesteps to prevent physics variance caused by server FPS fluctuations.
+**Frametime** (gpGlobals->frametime) is the time interval between server ticks, typically 0.015 seconds for 66-tick servers or 0.01 seconds for 100-tick servers. All physics calculations in these files scale by frametime; any fixed-timestep enforcement would need to live elsewhere in the engine.
 
 ---
 
@@ -210,29 +210,22 @@ if (stuck_on_ramp && sv_ramp_fix.GetBool())
 
 Another critical Momentum Mod improvement addresses what's known as the "vertical ramp bug." In vanilla Source, when a player collides with a crease (where two planes meet), the engine attempts to calculate the direction along that crease using the cross product of the two plane normals. This calculation assumes the planes intersect at an angle, creating a line along which the player should slide.
 
-However, in surf maps, ramps are often constructed from multiple brush entities that meet perfectly flush. At these seams, the player can contact both brushes simultaneously, registering two planes with identical or nearly identical normals. When the normals are parallel or nearly parallel, the cross product operation fails or produces an unstable result, causing velocity to zero out or redirect unpredictably.
+However, in surf maps, ramps are often constructed from multiple brush entities that meet perfectly flush. At these seams, the player can contact both brushes simultaneously, registering two planes with identical or nearly identical normals. When the normals are parallel or nearly parallel, the cross product operation provides no usable crease direction and the player can stall.
 
-Momentum Mod detects this condition by comparing the two plane normals with a tolerance check. If the planes are effectively identical (CloseEnough returns true), the code skips the cross product calculation entirely. Instead, it pushes the player slightly away from the duplicate plane, preserving their horizontal velocity while preventing the stuck state:
+Momentum Mod detects this condition by comparing the two plane normals with a tolerance check. If the planes are effectively identical (`CloseEnough` returns true), the code skips the cross product calculation. Instead, it adds `20 * planeNormal` to the original velocity, overwriting the X/Y components (Z is left untouched) to nudge the player off the duplicate plane and break the stall:
 
 ```cpp
-// When we have exactly two collision planes
 if (numplanes == 2 && CloseEnough(planes[0], planes[1], FLT_EPSILON))
 {
-    // The planes are identical or nearly parallel
-    // Push the player away from the surface slightly
     VectorMA(original_velocity, 20.0f, planes[0], new_velocity);
-    
-    // Preserve horizontal velocity but not vertical
-    // This prevents gaining height advantages from the bug fix
     mv->m_vecVelocity.x = new_velocity.x;
     mv->m_vecVelocity.y = new_velocity.y;
-    // Note: Z velocity is preserved from previous calculation
-    
-    break; // Exit the loop to prevent further processing
+    // Z stays whatever prior clipping left it.
+    break;
 }
 ```
 
-This elegant solution maintains smooth movement across ramp seams without allowing exploit behavior like gaining free height.
+This push-away removes the vertical ramp bug without introducing upward boosts.
 
 ---
 
@@ -304,41 +297,28 @@ Mathematically, this is correct behavior for a collision. However, from a gamepl
 
 ### Momentum Mod: Slope Fix
 
-Momentum Mod's slope fix addresses this by adding special logic to ClipVelocity that preserves horizontal velocity under specific conditions. The fix only activates when the player has autobhop enabled and is holding jump, and only when landing on surfaces that qualify as floor (normal.z >= 0.7) with reasonable vertical velocity.
-
-The key insight is that if the clipping operation would reduce the player's horizontal speed below what they had before the collision, and they're trying to jump, the fix restores the original horizontal velocity components while zeroing the vertical component:
+Momentum Mod's slope fix adds special logic to ClipVelocity, but it is only active when `sv_rngfix_enable` is **off**. When active, it requires the player to have autobhop enabled, be holding jump, be hitting a standable surface (normal.z >= 0.7) with reasonable vertical speed (`out.z <= NON_JUMP_VELOCITY`), and (if in a slide trigger) be allowed to jump. If those checks pass and clipping would remove horizontal speed while moving into the slope, the fix restores horizontal speed while zeroing vertical:
 
 ```cpp
 int CMomentumGameMovement::ClipVelocity(Vector& in, Vector& normal, Vector& out, float overbounce)
 {
-    // Perform standard clipping calculation
     const int blocked = BaseClass::ClipVelocity(in, normal, out, overbounce);
-    
-    // Check if RNG fix system is enabled
-    if (sv_rngfix_enable.GetBool()) return blocked;
-    
-    // Slope fix: preserve horizontal velocity when jumping up inclines
+    if (sv_rngfix_enable.GetBool())
+        return blocked;
+
     if (sv_slope_fix.GetBool() && m_pPlayer->HasAutoBhop() && (mv->m_nButtons & IN_JUMP))
     {
-        // Check if this is a surface we could potentially stand on
-        // and that we're not flying upward too fast
         bool canJump = normal[2] >= 0.7f && out.z <= NON_JUMP_VELOCITY;
-        
-        // Check if we're moving into the slope horizontally
-        // and if clipping reduced our horizontal speed
-        bool movingIntoSlope = (normal.x * in.x + normal.y * in.y < 0.0f);
-        bool lostSpeed = (out.Length2DSqr() <= in.Length2DSqr());
-        
-        if (canJump && movingIntoSlope && lostSpeed)
+        if (m_pPlayer->m_CurrentSlideTrigger)
+            canJump &= m_pPlayer->m_CurrentSlideTrigger->m_bAllowingJump;
+
+        if (canJump && (normal.x * in.x + normal.y * in.y < 0.0f) && out.Length2DSqr() <= in.Length2DSqr())
         {
-            // Restore original horizontal velocity
             out.x = in.x;
             out.y = in.y;
-            // But keep vertical velocity at zero to prevent flying
             out.z = 0.0f;
         }
     }
-    
     return blocked;
 }
 ```
@@ -612,107 +592,13 @@ This behavior is technically correct for walking up slopes but completely breaks
 
 ### Momentum Mod: Predictive Categorization
 
-Momentum Mod solves these issues through predictive ground detection. Rather than only checking the current position, the function simulates the physics of the *next* frame to determine if the player will actually remain on the ground.
+Momentum Mod keeps the vanilla downward trace (depth controlled by `sv_considered_on_ground`, default 2 units) but adds a guarded prediction path. When `sv_edge_fix` is on and the player is not auto-bhopping while holding jump, the code applies half gravity to the current velocity, traces a fall for one tick, clips that velocity against the hit plane, then slides for a full tick and checks for ground under the slide endpoint. If that follow-up check misses, the player remains airborne, preventing premature friction when skimming an edge.
 
-The enhanced logic is more sophisticated than a simple position check. It performs the following steps:
-1.  **Gravity Prediction:** It calculates the velocity for the next frame by applying half of the frame's gravity. This ensures vertical momentum is accurately represented.
-2.  **Impact Prediction:** It traces ahead to see where the player would land.
-3.  **Slide Simulation:** If an impact is detected, it doesn't stop there. It simulates the collision response (`ClipVelocity`) to determine how the player would slide along that surface.
-4.  **Edge Check:** It traces downward from the *end* of that simulated slide. If the player slides off the surface within the same tick, the engine refuses to ground them.
+Landing decisions also depend on `sv_rngfix_enable`:
+- With `sv_rngfix_enable` **on**, if grounding is predicted, the code optionally runs the slope fix: it clips the predicted velocity, and if the game mode can bhop (or the predicted Z speed is reasonable) and the clip would increase horizontal speed, it copies that velocity and sets ground; otherwise it withholds grounding to avoid uphill slows.
+- With `sv_rngfix_enable` **off**, it clips the predicted velocity, requires `vecNextVelocity.z <= NON_JUMP_VELOCITY` and `bGrounded == true`, and if slope fix is enabled and the clip increases 2D speed, it copies that velocity before grounding.
 
-Here is the conceptual implementation:
-
-```cpp
-void CMomentumGameMovement::CategorizePosition(void)
-{
-    // Standard vanilla checks first
-    Vector point = mv->GetAbsOrigin();
-    Vector traceEnd = point;
-    traceEnd.z -= sv_considered_on_ground.GetFloat(); // Typically 2.0f
-    
-    trace_t pm;
-    TracePlayerBBox(point, traceEnd, PlayerSolidMask(), COLLISION_GROUP_PLAYER_MOVEMENT, pm);
-    
-    // Initial check: did we hit a flat-enough surface?
-    bool bGrounded = pm.DidHit() && pm.plane.normal.z >= 0.7f;
-
-    // Momentum Mod: Predictive Edge/Slope Logic
-    // We verify if we should ACTUALLY be grounded by simulating the next tick.
-    // We skip this check if the player is auto-bhopping and holding jump (intent to jump).
-    if (sv_edge_fix.GetBool() && bGrounded && 
-        !(m_pPlayer->HasAutoBhop() && (mv->m_nButtons & IN_JUMP)))
-    {
-        // 1. Calculate velocity for the next tick
-        Vector vecNextVelocity = mv->m_vecVelocity;
-        // Apply half-gravity (leapfrog integration) for accurate vertical prediction
-        vecNextVelocity.z -= player->GetGravity() * GetCurrentGravity() * 0.5f * gpGlobals->frametime;
-
-        // 2. Predict where the player falls to next frame
-        Vector endFall;
-        VectorMA(mv->GetAbsOrigin(), gpGlobals->frametime, vecNextVelocity, endFall);
-        trace_t pmFall;
-        TracePlayerBBox(mv->GetAbsOrigin(), endFall, PlayerSolidMask(), COLLISION_GROUP_PLAYER_MOVEMENT, pmFall);
-
-        if (!pmFall.DidHit())
-        {
-            // We would miss the ground entirely next frame.
-            bGrounded = false;
-        }
-        else
-        {
-            // 3. Simulate the slide collision
-            // We hit the ground, but will we slide off it immediately?
-            ClipVelocity(vecNextVelocity, pmFall.plane.normal, vecNextVelocity, 1.0f);
-
-            // Simulate the sliding movement using the full frametime
-            Vector endSlide;
-            VectorMA(pmFall.endpos, gpGlobals->frametime, vecNextVelocity, endSlide);
-
-            // 4. Check ground again at the end of the slide
-            trace_t pmGround;
-            TracePlayerBBox(endSlide, endSlide - Vector(0,0,2.0f), ..., pmGround);
-
-            // If the slide carried us off the surface, it's an edge bug.
-            // Do not snap to ground.
-            if (!pmGround.DidHit())
-                bGrounded = false; 
-        }
-    }
-    
-    // Momentum Mod: Slope fix logic
-    if (sv_rngfix_enable.GetBool() && bGrounded)
-    {
-        if (sv_slope_fix.GetBool())
-        {
-            // Compare current horizontal velocity to what it would be if grounded
-            // Only actually ground the player if it doesn't cause significant speed loss
-            Vector currentVelHorizontal = mv->m_vecVelocity;
-            currentVelHorizontal.z = 0;
-            float currentSpeed2D = currentVelHorizontal.Length();
-            
-            // Simulate clipping velocity against the ground plane
-            Vector testVelocity;
-            ClipVelocity(mv->m_vecVelocity, pm.plane.normal, testVelocity, 1.0f);
-            testVelocity.z = 0;
-            float testSpeed2D = testVelocity.Length();
-            
-            // Only ground if we wouldn't lose significant horizontal speed
-            if (testSpeed2D < currentSpeed2D * 0.95f)
-            {
-                bGrounded = false;
-            }
-        }
-    }
-    
-    // Apply the final ground state
-    if (bGrounded)
-        SetGroundEntity(&pm);
-    else
-        SetGroundEntity(nullptr);
-}
-```
-
-This predictive approach eliminates the premature ground-snapping that plagues vanilla movement. By simulating the collision response (the slide) rather than just the impact, the engine correctly identifies "glancing blows" where the player touches an edge but has enough momentum to slide off it immediately.
+These checks make edge bugs consistent only when `sv_edge_fix` is enabled and the jump-intent bypass is not active.
 
 ### Edge Bug Mechanics
 
@@ -742,49 +628,23 @@ This manifests as a sticky, slow feeling when approaching surf ramps from below 
 
 ### Momentum Mod: Step Fix
 
-Momentum Mod modifies `StepMove` to prevent this problematic velocity modification using an early-exit strategy. The key insight is that if the initial ground slide (the standard move) results in significant upward velocity (greater than `NON_JUMP_VELOCITY`), the player is likely surfing or moving fast up a ramp. In this case, attempting the complex "Step Up" logic is unnecessary and potentially harmful to momentum.
-
-Instead of running both the ground move and the step move and comparing them, Momentum Mod checks the result of the initial ground move. If the player is moving up fast enough, it accepts that result immediately and aborts the step logic:
+Momentum Mod gates its step changes behind `sv_rngfix_enable` (and skips them entirely in A-HOP mode). If enabled, it first performs the down/slide move. Should that leave the player with upward velocity greater than `NON_JUMP_VELOCITY`, it trusts that result outright and exits early—no step-up attempt—avoiding the slope-induced Z injection. Otherwise it performs the standard up/down comparison but uses the complete up or down result instead of mixing up-distance with down-velocity:
 
 ```cpp
 void CMomentumGameMovement::StepMove(Vector &vecDestination, trace_t &trace)
 {
-    // If RNG fix system is disabled, use vanilla behavior
-    if (!sv_rngfix_enable.GetBool())
-    {
-        BaseClass::StepMove(vecDestination, trace);
-        return;
-    }
-    
-    // Attempt normal ground movement (sliding along the floor/ramp)
-    Vector vecEndPos = vecDestination;
-    TryPlayerMove(&vecEndPos, &trace);
-    
-    // Check if the slide move resulted in significant upward velocity
-    // NON_JUMP_VELOCITY is different units/sec depending on the game/mode
+    if (!sv_rngfix_enable.GetBool() || g_pGameModeSystem->GameModeIs(GAMEMODE_AHOP))
+        return BaseClass::StepMove(vecDestination, trace); // vanilla path
+
+    TryPlayerMove(&vecEndPos, &trace); // down/slide
     if (mv->m_vecVelocity.z > NON_JUMP_VELOCITY)
-    {
-        // We are likely flying up a ramp or surfing
-        // The standard slide move is correct; do not attempt to "step up"
-        // Stepping up here would likely clip our velocity against the ramp "stairs"
-        // and kill our speed.
-        
-        // Calculate step height for statistics if needed
-        float flStepDist = mv->GetAbsOrigin().z - vecPos.z;
-        if (flStepDist > 0.0f)
-        {
-            mv->m_outStepHeight += flStepDist;
-        }
-        return; // EARLY EXIT: Skip the rest of StepMove
-    }
-    
-    // ... If velocity was low, proceed with standard Step Up logic ...
+        return; // keep slide result
+
+    // otherwise run the vanilla up/down test, but select the full up or down result
 }
 ```
 
-This modification ensures that steep slopes are treated as smooth slides rather than jagged steps when moving at speed, maintaining the player's intended trajectory and preventing the sticky behavior that plagues vanilla. Players can approach ramps confidently, knowing the movement system will interpret their intent correctly.  
-
-Note: The Step Fix and specific elements of the Slope/Edge Fix logic are controlled by the `sv_rngfix_enable` ConVar. The Step Fix logic is gated behind this variable (requiring it to be set to 1), whereas the native ClipVelocity Slope Fix operates when this variable is 0.  
+This prevents step logic from injecting downward velocity on fast uphill slides, while retaining vanilla behavior when the fix is disabled.
 
 ---
 
@@ -838,7 +698,7 @@ Final checks ensure velocity remains within engine limits (typically 3500 units/
 
 The frametime value (gpGlobals->frametime) serves as the time scaling factor for all physics calculations. At 66 tick, this equals 0.015 seconds. At 100 tick, it equals 0.01 seconds. All acceleration, gravity, and velocity calculations scale by this value to ensure physics behavior remains consistent across different server tick rates.
 
-Momentum Mod enforces fixed timesteps to prevent variance caused by server FPS fluctuations. In vanilla Source, if the server temporarily drops below its target tick rate, frametime increases for those frames, causing physics calculations to behave differently. This can lead to inconsistent jump heights, air acceleration rates, and surf physics. By locking frametime to a fixed value, Momentum ensures perfect reproducibility of movement sequences.
+These movement files use `gpGlobals->frametime` exactly as vanilla does; any fixed-timestep enforcement would need to live outside this code. If the server tick rate wobbles, frametime still scales the calculations here.
 
 ### The Complete Picture
 
@@ -855,10 +715,8 @@ Momentum Mod's enhancements specifically target the randomness and inconsistency
 ### Configuration Variables
 
 **sv_ramp_bumpcount** (Default: 8)
-- Increases collision resolution iterations from vanilla's hardcoded 4
-- Prevents random stops on complex curved ramps
-- Allows smooth surfing on geometry that would exhaust vanilla's bump limit
-- Higher values provide more thorough collision resolution at minimal performance cost
+- Increases collision resolution iterations from vanilla's hardcoded 4 (min 4, max 16)
+- Used by Momentum's TryPlayerMove loop; higher values reduce ramp stalls on complex geometry
 
 **sv_ramp_fix** (Default: Enabled)
 - Activates the retrace system for handling stuck-in-geometry states
@@ -867,22 +725,24 @@ Momentum Mod's enhancements specifically target the randomness and inconsistency
 - Eliminates the most common cause of random mid-surf stops
 
 **sv_slope_fix** (Default: Enabled)
-- Preserves horizontal velocity when jumping onto inclined surfaces
-- Prevents speed loss when boarding ramps from above
-- Only activates when player has autobhop and is holding jump
-- Creates smooth, consistent ramp entry without exploitable behavior
+- Only runs when `sv_rngfix_enable` is 0, the player has autobhop, is holding jump, hits a walkable plane, and (if in a slide trigger) is allowed to jump
+- Restores horizontal speed and zeros Z if clipping would reduce 2D speed while moving into the plane
 
 **sv_edge_fix** (Default: Enabled)
-- Implements predictive ground detection to enable consistent edge bugs
-- Prevents premature ground-snapping when approaching edges at speed
-- Maintains proper ground detection for normal gameplay
-- Allows skilled players to use edge techniques without pixel-perfect positioning
+- Predictively simulates a fall/slide before grounding when not auto-bhopping with jump held
+- Avoids premature grounding on edges and makes edge bugs consistent under those conditions
 
 **sv_ramp_initial_retrace_length** (Default: 0.2 units)
 - Controls how far the retrace system backs the player out when stuck
 - Lower values minimize position correction but may not fully resolve stuck states
 - Higher values ensure freedom from geometry but may cause noticeable position shifts
 - Default value balances smooth movement with minimal visual artifacts
+
+**sv_considered_on_ground** (Default: 2.0)
+- Sets the downward trace distance used for ground checks in CategorizePosition
+
+**sv_rngfix_enable** (Default: 0)
+- Toggles an alternate landing/step logic path; when on, it disables the ClipVelocity slope fix but enables the step fix and alternative grounding/slope handling described above
 
 ### Algorithmic Improvements
 
@@ -913,9 +773,8 @@ In practice, these improvements have negligible performance impact even on older
 | **Vertical Ramp Bug** | Cross-product fails on parallel planes, causing stops | Detects parallel planes and pushes player away |
 | **Uphill Slopes** | ClipVelocity reduces horizontal speed | Slope fix preserves horizontal velocity when jumping |
 | **Stairs/Steps** | Can generate downward velocity on steps | Step fix prevents excessive negative Z velocity |
-| **Ground Detection** | Snaps to ground within 2 units | Predictive check prevents premature grounding |
-| **Edge Bugs** | Requires pixel-perfect positioning | Edge fix enables consistent edge techniques |
-| **Frametime** | Can vary with server FPS | Enforced fixed timestep for reproducibility |
+| **Ground Detection** | Snaps to ground within 2 units | Predictive check (when enabled) prevents premature grounding |
+| **Edge Bugs** | Requires pixel-perfect positioning | Edge fix enables consistent edge techniques (when enabled) |
 | **Configuration** | No movement-related ConVars | Multiple ConVars for customization |
 | **Debugging** | Limited visibility into failures | Extensive logging and visualization options |
 
@@ -934,4 +793,3 @@ For developers, this analysis demonstrates the importance of understanding syste
 For players, this knowledge provides insight into what happens beneath the surface during every frame of movement. Understanding why looking sideways produces acceleration, why gravity enables speed gain on ramps, and why certain slopes feel "sticky" transforms surfing from mysterious black magic into a comprehensible, masterable skill.
 
 The Source Engine's movement system has influenced game design for nearly two decades, spawning entire game modes, communities, and competitive scenes. Its continued relevance stems from the depth that emerges from relatively simple rules-depth that rewards mastery while remaining accessible to newcomers. Momentum Mod ensures this legacy continues with the reliability and polish that modern players expect.
-
