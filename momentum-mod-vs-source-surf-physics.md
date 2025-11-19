@@ -746,18 +746,18 @@ Momentum Mod's enhancements specifically target the randomness and inconsistency
 
 ### Algorithmic Improvements
 
-**Vertical Ramp Bug Fix**
-The most elegant fix in Momentum Mod addresses the parallel plane collision issue with minimal code. When two collision planes are detected and found to be effectively identical (within floating-point tolerance), the code skips the problematic cross-product calculation. Instead, it pushes the player slightly away from the plane in the plane's normal direction, preserving horizontal velocity components while preventing the stuck state. This fix operates transparently, requiring no configuration and producing no side effects.
-
-**Ramp Stuck Retrace System**
-The retrace system represents a more comprehensive approach to floating-point error handling. When a trace begins inside solid geometry, vanilla Source immediately stops the player. Momentum Mod instead flags this as a stuck state and activates recovery logic. The system searches a 3×3×3 grid of directions (27 total) to find a valid plane that leads out of the stuck position. Once found, the player's origin is adjusted backward along that plane by the retrace length. This recovery happens in a single frame and is imperceptible to the player, but it prevents the jarring stop that would occur in vanilla.
-
-**Slope Velocity Preservation**
-The slope fix modifies ClipVelocity's behavior when specific conditions are met: the player must have autobhop enabled and be holding jump, the surface must be walkable (normal.z >= 0.7), and the clipping operation must reduce horizontal speed. When all conditions are satisfied, the fix restores the original horizontal velocity components while zeroing vertical velocity. This creates natural, consistent behavior when boarding ramps while preventing exploitation in other contexts.
-
-**Predictive Ground Categorization**
-Traditional ground detection only examines the current frame, leading to premature ground-snapping in many scenarios. Momentum Mod's predictive approach simulates the next frame's position based on current velocity and examines whether the player would be grounded at that future position. This forward-looking categorization prevents friction application during valid bhop chains and surf approaches while maintaining proper ground detection when players actually intend to land.
-
+**Vertical Ramp Bug Fix**  
+The most elegant fix in Momentum Mod addresses the parallel plane collision issue with minimal code. When two collision planes are detected and found to be effectively identical (within floating-point tolerance), the code skips the problematic cross-product calculation. Instead, it pushes the player slightly away from the plane in the plane's normal direction, preserving horizontal velocity components while preventing the stuck state. This fix operates transparently, requiring no configuration and producing no side effects.  
+  
+**Ramp Stuck Retrace System**  
+The retrace system represents a more comprehensive approach to floating-point error handling. When a trace begins inside solid geometry, vanilla Source immediately stops the player. Momentum Mod instead flags this as a stuck state and activates recovery logic. The system searches a 3×3×3 grid of directions (27 total) to find a valid plane that leads out of the stuck position. Once found, the player's origin is adjusted backward along that plane by the retrace length. This recovery happens in a single frame and is imperceptible to the player, but it prevents the jarring stop that would occur in vanilla.  
+  
+**Slope Velocity Preservation**  
+The slope fix modifies ClipVelocity's behavior when specific conditions are met: the player must have autobhop enabled and be holding jump, the surface must be walkable (normal.z >= 0.7), and the clipping operation must reduce horizontal speed. When all conditions are satisfied, the fix restores the original horizontal velocity components while zeroing vertical velocity. This creates natural, consistent behavior when boarding ramps while preventing exploitation in other contexts.  
+  
+**Predictive Ground Categorization**  
+Traditional ground detection only examines the current frame, leading to premature ground-snapping in many scenarios. Momentum Mod's predictive approach simulates the next frame's position based on current velocity and examines whether the player would be grounded at that future position. This forward-looking categorization prevents friction application during valid bhop chains and surf approaches while maintaining proper ground detection when players actually intend to land.  
+  
 ### Performance Considerations
 
 All Momentum Mod improvements are designed with performance in mind. The increased bump count from 4 to 8 doubles the maximum collision iterations but only in worst-case scenarios involving extremely complex geometry. Most frames still resolve in fewer iterations. The retrace system only activates when stuck states are detected, adding no overhead to normal movement. The parallel plane check is a simple floating-point comparison that executes in nanoseconds. The slope fix adds one additional velocity magnitude comparison to ClipVelocity calls.
@@ -793,3 +793,4 @@ For developers, this analysis demonstrates the importance of understanding syste
 For players, this knowledge provides insight into what happens beneath the surface during every frame of movement. Understanding why looking sideways produces acceleration, why gravity enables speed gain on ramps, and why certain slopes feel "sticky" transforms surfing from mysterious black magic into a comprehensible, masterable skill.
 
 The Source Engine's movement system has influenced game design for nearly two decades, spawning entire game modes, communities, and competitive scenes. Its continued relevance stems from the depth that emerges from relatively simple rules-depth that rewards mastery while remaining accessible to newcomers. Momentum Mod ensures this legacy continues with the reliability and polish that modern players expect.
+
