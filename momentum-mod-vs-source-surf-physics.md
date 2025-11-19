@@ -71,7 +71,7 @@ For the engine to treat a surface as surfable rather than walkable, it must sati
 
 **The Rule**: A surface is surfable if and only if the Z component of its normal vector is less than 0.7.
 
-This threshold derives from the relationship between the normal vector and the angle of the surface relative to the horizontal plane. A perfectly flat floor has a normal of (0, 0, 1), meaning the Z component equals 1. A vertical wall has a normal where Z equals 0. The threshold of 0.7 represents the cosine of the critical angle: arccos(0.7) ≈ 45.57 degrees.
+This threshold derives from the relationship between the normal vector and the angle of the surface relative to the horizontal plane. A perfectly flat floor has a normal of (0, 0, 1), meaning the Z component equals 1. A vertical wall has a normal where Z equals 0. The threshold of 0.7 represents the cosine of the critical angle: arccos(0.7) = ~45.57 degrees.
 
 Therefore, any surface steeper than approximately 45.5 degrees relative to horizontal qualifies as a surf ramp. The engine treats the player as airborne when touching such surfaces, which has three critical implications. First, friction is not applied to the player's velocity. Second, the player receives full air control through the air acceleration system. Third, the collision is resolved using `ClipVelocity` rather than ground movement logic.
 
@@ -127,7 +127,7 @@ Understanding the technical implementation requires familiarity with specific te
 
 **Accelspeed** is the actual acceleration applied this frame, calculated by multiplying the acceleration coefficient (sv_airaccelerate), wishspeed, frametime, and surface friction. This value gets capped by addspeed to prevent overshooting the target velocity.
 
-**Surface Normal** is a unit vector perpendicular to a surface, pointing away from solid material. For collision resolution, this vector defines the plane of the surface and determines how velocity should be adjusted. The Z component of the normal determines whether a surface is classified as floor (Z > 0.7), surf ramp (0 < Z < 0.7), or wall (Z ≈ 0).
+**Surface Normal** is a unit vector perpendicular to a surface, pointing away from solid material. For collision resolution, this vector defines the plane of the surface and determines how velocity should be adjusted. The Z component of the normal determines whether a surface is classified as floor (Z > 0.7), surf ramp (0 < Z < 0.7), or wall (Z = ~0).
 
 **Backoff** in the context of ClipVelocity is the magnitude of velocity directed into a surface that must be removed to prevent penetration. It's calculated as the dot product of incoming velocity and surface normal, scaled by the overbounce factor.
 
@@ -426,7 +426,7 @@ The critical insight lies in the concept of currentspeed, which measures velocit
 
 However, when the player looks 90 degrees sideways while maintaining forward input, the wish direction becomes perpendicular to their current velocity. The dot product of perpendicular vectors is zero, so currentspeed equals zero regardless of how fast they're moving forward. This allows the full 30 units of addspeed to be applied in the sideways direction.
 
-Through vector addition, adding sideways velocity to forward velocity produces a resultant velocity with greater magnitude. This is the Pythagorean theorem in action: if you have 1000 units forward velocity and add 30 units sideways velocity, your new speed is sqrt(1000² + 30²) ≈ 1000.45 units. The speed increase is small per frame but accumulates rapidly.
+Through vector addition, adding sideways velocity to forward velocity produces a resultant velocity with greater magnitude. This is the Pythagorean theorem in action: if you have 1000 units forward velocity and add 30 units sideways velocity, your new speed is sqrt(1000² + 30²) = ~1000.45 units. The speed increase is small per frame but accumulates rapidly.
 
 The implementation carefully clamps acceleration to prevent exceeding the calculated addspeed limit:
 
@@ -913,6 +913,7 @@ For developers, this analysis demonstrates the importance of understanding syste
 For players, this knowledge provides insight into what happens beneath the surface during every frame of movement. Understanding why looking sideways produces acceleration, why gravity enables speed gain on ramps, and why certain slopes feel "sticky" transforms surfing from mysterious black magic into a comprehensible, masterable skill.
 
 The Source Engine's movement system has influenced game design for nearly two decades, spawning entire game modes, communities, and competitive scenes. Its continued relevance stems from the depth that emerges from relatively simple rules-depth that rewards mastery while remaining accessible to newcomers. Momentum Mod ensures this legacy continues with the reliability and polish that modern players expect.
+
 
 
 
