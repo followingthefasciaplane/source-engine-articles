@@ -20,6 +20,14 @@ This document provides a comprehensive technical analysis of surfing mechanics i
 - [Source Engine 2018 Leak HL2/TF2 branch - gamemovement.cpp](https://github.com/followingthefasciaplane/source-engine-diff-check/blob/main/collection/gamemovement_2018_hl2.cpp)
 - [Momentum Mod - mom_gamemovement.cpp](https://github.com/momentum-mod/game/blob/develop/mp/src/game/shared/momentum/mom_gamemovement.cpp)
 
+**Visualization on CS:S**
+- [MomSurfFix-API](https://github.com/followingthefasciaplane/MomSurfFix-API/blob/master/addons/sourcemod/scripting/include/momsurffix2.inc)  
+  
+This is my fork of GAMMACASE's SourceMod plugin that ports the Momentum Mod TryPlayerMove implementation to CS:S.  
+It features a shared plugin API that allows you to use the precise data from his hooks in your own plugins.
+ 
+[![the video](https://img.youtube.com/vi/MPAS31U0mws/maxresdefault.jpg)](https://www.youtube.com/watch?v=MPAS31U0mws)
+
 ---
 
 ## Table of Contents
@@ -905,6 +913,7 @@ For developers, this analysis demonstrates the importance of understanding syste
 For players, this knowledge provides insight into what happens beneath the surface during every frame of movement. Understanding why looking sideways produces acceleration, why gravity enables speed gain on ramps, and why certain slopes feel "sticky" transforms surfing from mysterious black magic into a comprehensible, masterable skill.
 
 The Source Engine's movement system has influenced game design for nearly two decades, spawning entire game modes, communities, and competitive scenes. Its continued relevance stems from the depth that emerges from relatively simple rules-depth that rewards mastery while remaining accessible to newcomers. Momentum Mod ensures this legacy continues with the reliability and polish that modern players expect.
+
 
 
 
