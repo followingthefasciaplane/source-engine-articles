@@ -782,7 +782,9 @@ void CMomentumGameMovement::StepMove(Vector &vecDestination, trace_t &trace)
 }
 ```
 
-This modification ensures that steep slopes are treated as smooth slides rather than jagged steps when moving at speed, maintaining the player's intended trajectory and preventing the sticky behavior that plagues vanilla. Players can approach ramps confidently, knowing the movement system will interpret their intent correctly.
+This modification ensures that steep slopes are treated as smooth slides rather than jagged steps when moving at speed, maintaining the player's intended trajectory and preventing the sticky behavior that plagues vanilla. Players can approach ramps confidently, knowing the movement system will interpret their intent correctly.  
+
+Note: The Step Fix and specific elements of the Slope/Edge Fix logic are controlled by the `sv_rngfix_enable` ConVar. The Step Fix logic is gated behind this variable (requiring it to be set to 1), whereas the native ClipVelocity Slope Fix operates when this variable is 0.  
 
 ---
 
@@ -932,3 +934,4 @@ For developers, this analysis demonstrates the importance of understanding syste
 For players, this knowledge provides insight into what happens beneath the surface during every frame of movement. Understanding why looking sideways produces acceleration, why gravity enables speed gain on ramps, and why certain slopes feel "sticky" transforms surfing from mysterious black magic into a comprehensible, masterable skill.
 
 The Source Engine's movement system has influenced game design for nearly two decades, spawning entire game modes, communities, and competitive scenes. Its continued relevance stems from the depth that emerges from relatively simple rules-depth that rewards mastery while remaining accessible to newcomers. Momentum Mod ensures this legacy continues with the reliability and polish that modern players expect.
+
